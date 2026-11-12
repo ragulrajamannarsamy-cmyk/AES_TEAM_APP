@@ -48,6 +48,21 @@ jobs:
           if [ -n "$GSJ" ]; then printf '%s' "$GSJ" > android/app/google-services.json; fi
           if [ -n "$FOD" ]; then printf '%s' "$FOD" > lib/firebase_options.dart; fi
 
+      # Permanent signing key: repository secrets KEYSTORE_BASE64 and
+      # KEYSTORE_PASSWORD. Without them the APK is debug-signed.
+      - name: Signing key (if provided)
+        env:
+          KS: ${{ secrets.KEYSTORE_BASE64 }}
+          PW: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KS" ] && [ -n "$PW" ]; then
+            printf '%s' "$KS" | tr -d ' \r\n' | base64 -d > android/app/aes-release.jks
+            printf 'storeFile=aes-release.jks\nstorePassword=%s\nkeyAlias=aes\nkeyPassword=%s\n' "$PW" "$PW" > android/key.properties
+            echo "Signing with company key."
+          else
+            echo "::warning::No signing key secrets; APK is debug-signed."
+          fi
+
       - name: Analyze (report only)
         run: flutter analyze --no-fatal-infos --no-fatal-warnings | tee analyze.txt || true
 

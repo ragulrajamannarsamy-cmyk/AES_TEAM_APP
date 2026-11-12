@@ -73,4 +73,28 @@ subprojects {
 subprojects {/' "$ROOT_GROOVY"
 fi
 
+# Release signing with the company's permanent key (android/key.properties,
+# written by CI from repository secrets). Without it, falls back to debug.
+APP_KTS=android/app/build.gradle.kts
+if [ -f "$APP_KTS" ] && ! grep -q "AES_SIGNING" "$APP_KTS"; then
+  perl -0pi -e 's/\n    buildTypes \{/
+    \/\/ AES_SIGNING
+    signingConfigs {
+        create("release") {
+            val f = rootProject.file("key.properties")
+            if (f.exists()) {
+                val p = java.util.Properties()
+                f.inputStream().use { p.load(it) }
+                storeFile = file(p.getProperty("storeFile"))
+                storePassword = p.getProperty("storePassword")
+                keyAlias = p.getProperty("keyAlias")
+                keyPassword = p.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {/' "$APP_KTS"
+  perl -pi -e 's/signingConfig = signingConfigs\.getByName\("debug"\)/signingConfig = if (rootProject.file("key.properties").exists()) signingConfigs.getByName("release") else signingConfigs.getByName("debug")/' "$APP_KTS"
+fi
+
 echo "Android project ready."
