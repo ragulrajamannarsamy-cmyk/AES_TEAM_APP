@@ -1,10 +1,14 @@
 # Builds the Android APK on GitHub's servers on every push.
-# Download it from the run's "Artifacts" section (Actions tab).
+# Each successful build on main is published as the "latest" release:
+# https://github.com/ragulrajamannarsamy-cmyk/AES_TEAM_APP/releases/latest
 name: Build APK
 
 on:
   push:
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -58,3 +62,13 @@ jobs:
             build/app/outputs/flutter-apk/app-release.apk
             analyze.txt
           if-no-files-found: warn
+
+      - name: Publish APK as "latest" release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk AES-Team.apk
+          NOTES="Build ${{ github.run_number }} · commit ${GITHUB_SHA::7} · $(date -u '+%d %b %Y %H:%M') UTC"
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest AES-Team.apk --title "AES Team App (latest)" --notes "$NOTES" --latest
