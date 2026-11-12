@@ -31,3 +31,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+# pdf/printing resolve archive 4.0.x, but image 4.11+ needs archive 4.4+
+# (ZLibDecoder.decodeLazy). Force a compatible archive.
+dependency_overrides:
+  archive: ^4.6.0
