@@ -1,0 +1,167 @@
+rules_version = '2';
+// AES Team App — who can see and change what.
+//
+// Staff are identified by their verified phone number (auth token
+// phone_number), which is also their document id in /users.
+// Owner + managers ("admins") see everything. Workers and drivers see only
+// their own records. Managers cannot approve their own requests.
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    function phone() { return request.auth.token.phone_number; }
+    function me() { return get(/databases/$(db)/documents/users/$(phone())).data; }
+    function signedIn() {
+      return request.auth != null && phone() != null
+        && exists(/databases/$(db)/documents/users/$(phone()))
+        && me().active == true;
+    }
+    function isOwner() { return signedIn() && me().role == 'owner'; }
+    function isAdmin() { return signedIn() && me().role in ['owner', 'manager']; }
+
+    // Existing doc belongs to the caller / new doc is written as the caller.
+    function mine() { return signedIn() && resource.data.phone == phone(); }
+    function asMe() { return signedIn() && request.resource.data.phone == phone(); }
+
+    // Admin decision on someone else's request (owner may decide any).
+    function canDecide() {
+      return isOwner() || (isAdmin() && resource.data.phone != phone());
+    }
+
+    // New request: own, pending, and no reviewer fields set by the worker.
+    function newPendingRequest() {
+      return asMe()
+        && request.resource.data.status == 'pending'
+        && !('reviewedBy' in request.resource.data)
+        && !('approvedAmount' in request.resource.data
+             && request.resource.data.approvedAmount != 0);
+    }
+
+    // ---------- Staff, roles, pay rates ----------
+    match /users/{userPhone} {
+      allow read: if signedIn() && (userPhone == phone() || isAdmin());
+      allow create, update: if isOwner()
+        || (isAdmin() && request.resource.data.role in ['worker', 'driver']
+            && (resource == null || resource.data.role in ['worker', 'driver']));
+      allow delete: if isOwner();
+    }
+
+    // ---------- Office + substation geofences ----------
+    match /sites/{siteId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    // ---------- Attendance: id <phone>_<yyyy-MM-dd> ----------
+    // Workers cannot change or delete an In/Out punch once recorded.
+    match /attendance/{docId} {
+      allow get: if signedIn() && (docId.split('_')[0] == phone() || isAdmin());
+      allow list: if mine() || isAdmin();
+      allow create: if asMe() && docId == phone() + '_' + request.resource.data.date;
+      allow update: if isAdmin() || (mine() && asMe()
+        && request.resource.data.date == resource.data.date
+        && (!('in' in resource.data) || request.resource.data['in'] == resource.data['in'])
+        && (!('out' in resource.data) || request.resource.data['out'] == resource.data['out']));
+      allow delete: if isOwner();
+    }
+
+    // ---------- Leave (worker may only add a certificate later) ----------
+    match /leaves/{id} {
+      allow read: if mine() || isAdmin();
+      allow create: if newPendingRequest();
+      allow update: if canDecide() || (mine()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['certUrl', 'certUploadedAt']));
+      allow delete: if isOwner();
+    }
+
+    // ---------- Salary advance / carry forward / expense requests ----------
+    match /advances/{id} {
+      allow read: if mine() || isAdmin();
+      allow create: if newPendingRequest()
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0;
+      allow update: if canDecide();
+      allow delete: if isOwner();
+    }
+    match /carryForwards/{id} {
+      allow read: if mine() || isAdmin();
+      allow create: if newPendingRequest()
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0;
+      allow update: if canDecide();
+      allow delete: if isOwner();
+    }
+    match /expenses/{id} {
+      allow read: if mine() || isAdmin();
+      allow create: if newPendingRequest()
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0;
+      allow update: if canDecide();
+      allow delete: if isOwner();
+    }
+
+    // ---------- Bank details ----------
+    // Live record: only admins write (on approval). Workers read their own.
+    match /bank/{userPhone} {
+      allow read: if signedIn() && (userPhone == phone() || isAdmin());
+      allow write: if isOwner() || (isAdmin() && userPhone != phone());
+    }
+    // Worker submissions waiting for verification.
+    match /bankRequests/{id} {
+      allow read: if mine() || isAdmin();
+      allow create: if newPendingRequest();
+      allow update: if canDecide();
+      allow delete: if isOwner();
+    }
+
+    // ---------- Driver vehicle log: id <phone>_<yyyy-MM-dd> ----------
+    // Driver creates the day with start km, then adds end km once.
+    match /vehicleLogs/{docId} {
+      allow get: if signedIn() && (docId.split('_')[0] == phone() || isAdmin());
+      allow list: if mine() || isAdmin();
+      allow create: if asMe()
+        && docId == phone() + '_' + request.resource.data.date
+        && request.resource.data.startKm is number
+        && !('endKm' in request.resource.data);
+      allow update: if isAdmin() || (mine()
+        && !('endKm' in resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['endKm', 'endPhoto', 'endTime'])
+        && request.resource.data.endKm >= resource.data.startKm);
+      allow delete: if isOwner();
+    }
+
+    // ---------- Payroll: id <yyyy-MM>_<phone> ----------
+    // Workers see only their own APPROVED payslips.
+    match /payroll/{id} {
+      allow read: if isAdmin() || (mine() && resource.data.status == 'approved');
+      allow write: if isAdmin();
+    }
+
+    // ---------- Jobs ----------
+    match /jobs/{jobId} {
+      allow read: if isAdmin() || (signedIn() && phone() in resource.data.assigned);
+      // Assigned workers may only move the status; admins change anything.
+      allow update: if isAdmin() || (signedIn() && phone() in resource.data.assigned
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']));
+      allow create, delete: if isAdmin();
+
+      match /updates/{u} {
+        function onJob() {
+          return phone() in get(/databases/$(db)/documents/jobs/$(jobId)).data.assigned;
+        }
+        allow read: if isAdmin() || (signedIn() && onJob());
+        allow create: if (isAdmin() || (signedIn() && onJob())) && asMe();
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    // ---------- Quotes, invoices, numbering ----------
+    match /bills/{id} {
+      allow read, write: if isAdmin();
+    }
+    match /counters/{id} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

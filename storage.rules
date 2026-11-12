@@ -1,0 +1,58 @@
+rules_version = '2';
+// Photos and documents. Each person uploads only into their own folder:
+//   <folder>/<phone>/<file>
+// The person and admins (owner/manager) can view them; job photos are
+// visible to any active staff member (teammates on the job).
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function phone() { return request.auth.token.phone_number; }
+    function user() {
+      return firestore.get(/databases/(default)/documents/users/$(phone())).data;
+    }
+    function active() { return request.auth != null && user().active == true; }
+    function isAdmin() { return active() && user().role in ['owner', 'manager']; }
+    function own(p) { return request.auth != null && p == phone(); }
+    function image(maxMb) {
+      return request.resource.size < maxMb * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+    function imageOrPdf(maxMb) {
+      return request.resource.size < maxMb * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*')
+            || request.resource.contentType == 'application/pdf');
+    }
+
+    // Attendance selfies and odometer photos: never editable once taken.
+    match /selfies/{p}/{file} {
+      allow read: if own(p) || isAdmin();
+      allow create: if own(p) && active() && image(3);
+    }
+    match /odometer/{p}/{file} {
+      allow read: if own(p) || isAdmin();
+      allow create: if own(p) && active() && image(5);
+    }
+
+    // Doctor certificates, expense bills, bank proof (cheque/passbook).
+    match /certificates/{p}/{file} {
+      allow read: if own(p) || isAdmin();
+      allow create: if own(p) && active() && imageOrPdf(8);
+    }
+    match /bills/{p}/{file} {
+      allow read: if own(p) || isAdmin();
+      allow create: if own(p) && active() && imageOrPdf(8);
+    }
+    match /bankproof/{p}/{file} {
+      allow read: if own(p) || isAdmin();
+      allow create: if own(p) && active() && imageOrPdf(8);
+    }
+
+    // Job progress photos.
+    match /jobs/{p}/{file} {
+      allow read: if active();
+      allow create: if own(p) && active() && image(5);
+    }
+
+    // Everything else is closed. No updates or deletes from the app.
+  }
+}
