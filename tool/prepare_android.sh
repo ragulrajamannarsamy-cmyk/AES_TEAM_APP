@@ -83,7 +83,7 @@ if [ -f "$APP_KTS" ] && ! grep -q "AES_SIGNING" "$APP_KTS"; then
         create("release") {
             val f = rootProject.file("key.properties")
             if (f.exists()) {
-                val p = java.util.Properties()
+                val p = Properties()
                 f.inputStream().use { p.load(it) }
                 storeFile = file(p.getProperty("storeFile"))
                 storePassword = p.getProperty("storePassword")
@@ -94,6 +94,8 @@ if [ -f "$APP_KTS" ] && ! grep -q "AES_SIGNING" "$APP_KTS"; then
     }
 
     buildTypes {/' "$APP_KTS"
+  # Import at file top: inside android {} "java" means the java extension.
+  perl -0pi -e 's/\A/import java.util.Properties\n\n/' "$APP_KTS"
   perl -pi -e 's/signingConfig = signingConfigs\.getByName\("debug"\)/signingConfig = if (rootProject.file("key.properties").exists()) signingConfigs.getByName("release") else signingConfigs.getByName("debug")/' "$APP_KTS"
 fi
 
