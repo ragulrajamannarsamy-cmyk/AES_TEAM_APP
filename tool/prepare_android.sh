@@ -35,4 +35,42 @@ for G in android/app/build.gradle android/app/build.gradle.kts; do
   perl -pi -e 's/minSdk\s*=\s*flutter\.minSdkVersion/minSdk = 23/; s/minSdkVersion\s+flutter\.minSdkVersion/minSdkVersion 23/' "$G"
 done
 
+# Some plugins pin an old compileSdk; current AndroidX needs 36+.
+# Raise every plugin to at least 36. Must run before evaluationDependsOn.
+ROOT_KTS=android/build.gradle.kts
+ROOT_GROOVY=android/build.gradle
+if [ -f "$ROOT_KTS" ] && ! grep -q "AES_COMPILE_SDK" "$ROOT_KTS"; then
+  perl -0pi -e 's/\nsubprojects \{/
+\/\/ AES_COMPILE_SDK
+subprojects {
+    afterEvaluate {
+        val ext = extensions.findByName("android") ?: return\@afterEvaluate
+        try {
+            val get = ext.javaClass.getMethod("getCompileSdk")
+            val cur = get.invoke(ext) as Int?
+            if (cur == null || cur < 36) {
+                ext.javaClass.getMethod("setCompileSdk", Int::class.javaObjectType).invoke(ext, 36)
+            }
+        } catch (e: Exception) {
+            logger.warn("AES: could not raise compileSdk for \${project.name}: \${e.message}")
+        }
+    }
+}
+
+subprojects {/' "$ROOT_KTS"
+elif [ -f "$ROOT_GROOVY" ] && ! grep -q "AES_COMPILE_SDK" "$ROOT_GROOVY"; then
+  perl -0pi -e 's/\nsubprojects \{/
+\/\/ AES_COMPILE_SDK
+subprojects {
+    afterEvaluate { p ->
+        if (p.hasProperty("android") && (p.android.compileSdkVersion == null
+                || p.android.compileSdkVersion.replace("android-", "").toInteger() < 36)) {
+            p.android.compileSdkVersion = 36
+        }
+    }
+}
+
+subprojects {/' "$ROOT_GROOVY"
+fi
+
 echo "Android project ready."

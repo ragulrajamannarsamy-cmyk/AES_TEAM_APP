@@ -12,7 +12,7 @@ import '../theme.dart';
 final _d = DateFormat('d MMM yyyy');
 
 Future<File?> pickCertificate() async {
-  final res = await FilePicker.platform.pickFiles(
+  final res = await FilePicker.pickFiles(
     type: FileType.custom,
     allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf'],
   );

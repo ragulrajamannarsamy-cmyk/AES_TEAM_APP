@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 
 import '../models/app_user.dart';
 import '../models/bank.dart';
-import '../models/requests.dart';
 import '../services/bank_service.dart';
 import '../theme.dart';
 import '../util.dart';
